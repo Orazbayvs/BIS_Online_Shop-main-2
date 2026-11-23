@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DJANGO_SECRET_KEY: ci-only-not-a-real-secret-0123456789abcdefghijklmnopqrstuvwxyz
+  DJANGO_DEBUG: "True"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  backend-postgres:
+    name: Backend tests (PostgreSQL 16)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: onlineshop
+          POSTGRES_PASSWORD: onlineshop
+          POSTGRES_DB: onlineshop
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U onlineshop"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Same variables a developer puts in configdrf/.env; PostgreSQL is the default database.
+      POSTGRES_DB: onlineshop
+      POSTGRES_USER: onlineshop
+      POSTGRES_PASSWORD: onlineshop
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+    defaults:
+      run:
+        working-directory: OnlineShop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: OnlineShop/requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Allow the test runner to create its test database
+        run: PGPASSWORD=onlineshop psql -h localhost -U onlineshop -d onlineshop -c "ALTER USER onlineshop CREATEDB;"
+      - name: Confirm the database engine is PostgreSQL
+        run: python configdrf/manage.py shell -c "from django.db import connection; assert connection.vendor == 'postgresql', connection.vendor; print('Database:', connection.vendor)"
+      - name: Django system checks
+        run: python configdrf/manage.py check
+      - name: Migrations are up to date
+        run: python configdrf/manage.py makemigrations --check --dry-run
+      - name: Run tests
+        run: python configdrf/manage.py test core --verbosity 2
+      - name: Deployment checklist (production settings)
+        env:
+          DJANGO_DEBUG: "False"
+        run: python configdrf/manage.py check --deploy --fail-level WARNING
+      - name: Migrate, seed, backup and restore smoke test
+        env:
+          DJANGO_BACKUP_DIR: ${{ runner.temp }}/backups
+        run: |
+          python configdrf/manage.py migrate --noinput
+          python configdrf/seed_data.py
+          python configdrf/manage.py backup_db --label ci --keep 3
+          name=$(ls "$DJANGO_BACKUP_DIR" | grep 'json.gz$' | head -n1)
+          python configdrf/manage.py restore_db "$name" --yes-i-understand
+          python configdrf/manage.py shell -c "from core.models import Product; n = Product.objects.count(); assert n > 0; print('Products after restore:', n)"
+
+  backend-sqlite:
+    name: Backend tests (SQLite compatibility)
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: sqlite:////tmp/onlineshop-ci.sqlite3
+    defaults:
+      run:
+        working-directory: OnlineShop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: OnlineShop/requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run tests
+        run: python configdrf/manage.py test core --verbosity 2
+
+  frontend:
+    name: Frontend build and unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: OnlineShop/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: OnlineShop/frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Production build
+        run: npm run build
+      - name: Unit tests
+        run: npm test -- --watch=false
