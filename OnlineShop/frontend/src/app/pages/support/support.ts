@@ -5,6 +5,7 @@ import { SupportTicket, SupportTicketStatus, UserRole } from '../../models/api.m
 import { ApiService } from '../../services/api.service';
 import { AuthService } from '../../services/auth.service';
 import { apiErrorMessage, collectionItems } from '../../utils/http';
+import { activeFilters, countActiveFilters } from '../../utils/filters';
 
 @Component({
   selector: 'app-support',
@@ -37,10 +38,46 @@ import { apiErrorMessage, collectionItems } from '../../utils/http';
         <p>Customers can create and follow requests here. Support staff can review and respond to customer requests.</p>
       </section>
 
+      <form *ngIf="canViewTickets" class="ws-toolbar ticket-filters" (ngSubmit)="applyFilters()" aria-label="Filter support requests">
+        <label class="grow">Search<input name="ticket-search" [(ngModel)]="filters.search" maxlength="120" [placeholder]="isSupportStaff ? 'Request #, text, or customer name' : 'Request # or text'"></label>
+        <label>Status
+          <select name="ticket-status" [(ngModel)]="filters.status" (ngModelChange)="applyFilters()">
+            <option value="">All statuses</option>
+            <option value="Open,In Progress">Open or in progress</option>
+            <option *ngFor="let status of statuses" [value]="status">{{ status }}</option>
+          </select>
+        </label>
+        <label>Category
+          <select name="ticket-category" [(ngModel)]="filters.category" (ngModelChange)="applyFilters()">
+            <option value="">All categories</option>
+            <option *ngFor="let option of categories" [value]="option.value">{{ option.label }}</option>
+          </select>
+        </label>
+        <label *ngIf="isSupportStaff">Handled by
+          <select name="ticket-assigned" [(ngModel)]="filters.assigned" (ngModelChange)="applyFilters()">
+            <option value="">Anyone</option>
+            <option value="me">Me</option>
+            <option value="unassigned">Nobody yet</option>
+          </select>
+        </label>
+        <label>From<input type="date" name="ticket-from" [(ngModel)]="filters.date_from" (ngModelChange)="applyFilters()"></label>
+        <label>To<input type="date" name="ticket-to" [(ngModel)]="filters.date_to" (ngModelChange)="applyFilters()"></label>
+        <label>Sort
+          <select name="ticket-ordering" [(ngModel)]="filters.ordering" (ngModelChange)="applyFilters()">
+            <option value="updated">Recently updated</option>
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+          </select>
+        </label>
+        <button class="btn btn-primary btn-sm" type="submit">Search</button>
+        <button class="btn btn-secondary btn-sm" type="button" (click)="clearFilters()" [disabled]="!filterCount">Clear</button>
+      </form>
+      <p *ngIf="canViewTickets && !loading && !hasError && filterCount" class="filter-summary">{{ tickets.length }} {{ tickets.length === 1 ? 'request matches' : 'requests match' }} your filters.</p>
+
       <p *ngIf="message" class="message" [class.error]="hasError" role="status">{{ message }}</p>
       <section *ngIf="canViewTickets && loading" class="state" aria-live="polite">Loading support requests…</section>
       <section *ngIf="canViewTickets && !loading && hasError" class="state error" role="alert"><p>{{ message }}</p><button type="button" class="btn btn-primary" (click)="loadTickets()">Try again</button></section>
-      <section *ngIf="canViewTickets && !loading && !hasError && !tickets.length" class="state"><h2>No support requests yet</h2><p>Your submitted requests will appear here.</p></section>
+      <section *ngIf="canViewTickets && !loading && !hasError && !tickets.length" class="state"><ng-container *ngIf="filterCount; else noTickets"><h2>No requests match these filters</h2><button type="button" class="btn btn-secondary" (click)="clearFilters()">Clear filters</button></ng-container><ng-template #noTickets><h2>No support requests yet</h2><p>Your submitted requests will appear here.</p></ng-template></section>
 
       <section *ngIf="canViewTickets && !loading && !hasError && tickets.length" class="ticket-list" aria-label="Support requests">
         <article *ngFor="let ticket of tickets" class="ticket">
@@ -62,6 +99,9 @@ import { apiErrorMessage, collectionItems } from '../../utils/http';
     </main>
   `,
   styles: [`
+    .ticket-filters { margin-top: 22px; }
+    .ticket-filters .grow { flex: 1 1 220px; }
+    .filter-summary { color: var(--text-light); font-size: .9rem; margin: -6px 0 12px; }
     .page { padding: 46px 20px 72px; }.page-header { display: flex; align-items: end; justify-content: space-between; gap: 22px; margin-bottom: 25px; }.eyebrow, .ticket-id { color: var(--primary-dark); font-size: .75rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }h1 { margin: 4px 0 8px; color: var(--secondary); font-size: clamp(2rem, 4vw, 3rem); }.page-header p:not(.eyebrow), .create-panel > p, .ticket-meta, .response small, .access-notice p { color: var(--text-light); }.btn-secondary { border: 1px solid var(--border); background: #fff; color: var(--secondary); }.create-panel, .access-notice { display: grid; gap: 9px; padding: 20px; border: 1px solid var(--border); border-radius: 14px; background: #fff; }.create-panel h2, .access-notice h2 { color: var(--secondary); font-size: 1.2rem; }.create-panel form { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(150px, .65fr); gap: 12px; }.create-panel label, .staff-form label { display: grid; gap: 6px; color: var(--secondary); font-size: .82rem; font-weight: 700; }.create-panel input, .create-panel select, .create-panel textarea, .staff-form select, .staff-form textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; font: inherit; }.create-panel textarea, .staff-form textarea { resize: vertical; }.create-panel .message-field { grid-column: 1 / -1; }.message-field span { color: var(--text-light); font-weight: 400; text-align: right; }.create-panel button { justify-self: start; }.message { margin: 20px 0 0; color: #166534; font-weight: 700; }.message.error, .state.error { color: #b91c1c; }.state { display: grid; justify-items: center; gap: 12px; padding: 76px 20px; color: var(--text-light); text-align: center; }.ticket-list { display: grid; gap: 16px; margin-top: 26px; }.ticket { padding: 20px; border: 1px solid var(--border); border-radius: 14px; background: #fff; }.ticket-header { display: flex; align-items: start; justify-content: space-between; gap: 16px; }.ticket-header h2 { margin-top: 5px; color: var(--secondary); font-size: 1.1rem; }.status { display: inline-flex; padding: 5px 9px; border-radius: 999px; font-size: .78rem; font-weight: 800; white-space: nowrap; }.status-open { background: #dbeafe; color: #1d4ed8; }.status-progress { background: #fef3c7; color: #92400e; }.status-resolved { background: #dcfce7; color: #166534; }.status-closed { background: #f3f4f6; color: #4b5563; }.ticket-meta { margin: 8px 0 12px; font-size: .83rem; }.ticket-message { color: #374151; line-height: 1.55; white-space: pre-wrap; }.response { margin-top: 15px; padding: 14px; border-radius: 9px; background: #f8fafc; }.response strong { color: var(--secondary); font-size: .87rem; }.response p { margin: 5px 0; color: #374151; line-height: 1.5; white-space: pre-wrap; }.staff-form { display: grid; grid-template-columns: minmax(150px, .45fr) minmax(220px, 1fr) auto; gap: 12px; align-items: end; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border); }.staff-form button { min-height: 42px; }.staff-form button:disabled { opacity: .6; cursor: wait; }@media (max-width: 720px) { .page { padding-inline: 14px; }.page-header { align-items: start; flex-direction: column; }.page-header > .btn { width: 100%; }.create-panel form, .staff-form { grid-template-columns: 1fr; }.create-panel button { width: 100%; }.ticket-header { flex-direction: column; }.status { align-self: start; } }
   `]
 })
@@ -74,6 +114,15 @@ export class SupportComponent implements OnInit {
   message = '';
   currentRole: UserRole | null = null;
   draft = this.emptyDraft();
+  filters = this.emptyFilters();
+  readonly statuses: SupportTicketStatus[] = ['Open', 'In Progress', 'Resolved', 'Closed'];
+  readonly categories = [
+    { value: 'general', label: 'General' },
+    { value: 'order', label: 'Order or delivery' },
+    { value: 'product', label: 'Product or stock' },
+    { value: 'account', label: 'Account access' },
+    { value: 'technical', label: 'Technical issue' },
+  ];
 
   constructor(
     private readonly api: ApiService,
@@ -105,7 +154,7 @@ export class SupportComponent implements OnInit {
     this.loading = true;
     this.hasError = false;
     this.message = '';
-    this.api.getSupportTickets().subscribe({
+    this.api.getSupportTickets(this.requestFilters()).subscribe({
       next: response => {
         this.tickets = collectionItems(response);
         this.loading = false;
@@ -117,6 +166,34 @@ export class SupportComponent implements OnInit {
         this.message = apiErrorMessage(error, 'We could not load support requests.');
       },
     });
+  }
+
+  get filterCount(): number {
+    return countActiveFilters(this.requestFilters());
+  }
+
+  applyFilters(): void {
+    if (this.filters.date_from && this.filters.date_to && this.filters.date_from > this.filters.date_to) {
+      this.hasError = true;
+      this.message = 'The start date must be on or before the end date.';
+      return;
+    }
+    this.loadTickets();
+  }
+
+  clearFilters(): void {
+    this.filters = this.emptyFilters();
+    this.loadTickets();
+  }
+
+  private requestFilters() {
+    const filters = activeFilters(this.filters);
+    if (!this.isSupportStaff) delete filters['assigned'];
+    return filters;
+  }
+
+  private emptyFilters() {
+    return { search: '', status: '', category: '', assigned: '', date_from: '', date_to: '', ordering: 'updated' };
   }
 
   createTicket(form: NgForm): void {

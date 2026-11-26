@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../services/api.service';
 import { AuthService } from '../../services/auth.service';
 import { apiErrorMessage } from '../../utils/http';
+import { activeFilters, countActiveFilters } from '../../utils/filters';
 
 @Component({
   selector: 'app-management',
@@ -36,7 +37,39 @@ import { apiErrorMessage } from '../../utils/http';
 
         <section>
           <h2>Orders</h2>
-          <p *ngIf="orders.length === 0">No orders found.</p>
+          <form class="ws-toolbar order-filters" (ngSubmit)="applyOrderFilters()" aria-label="Filter orders">
+            <label class="grow">Search<input name="order-search" [(ngModel)]="orderFilters.search" maxlength="120" [placeholder]="canSeeCustomerData ? 'Order #, product, or address' : 'Order # or product'"></label>
+            <label>Status
+              <select name="order-status" [(ngModel)]="orderFilters.status" (ngModelChange)="applyOrderFilters()">
+                <option value="">All statuses</option>
+                <option *ngFor="let status of orderStatuses" [value]="status">{{ status }}</option>
+              </select>
+            </label>
+            <label *ngIf="canSeeCustomerData">Payment
+              <select name="order-payment-status" [(ngModel)]="orderFilters.payment_status" (ngModelChange)="applyOrderFilters()">
+                <option value="">Any payment</option>
+                <option value="Pending">Pending</option>
+                <option value="Paid">Paid</option>
+                <option value="Refunded">Refunded</option>
+                <option value="Failed">Failed</option>
+              </select>
+            </label>
+            <label *ngIf="canSeeCustomerData">Customer ID<input name="order-customer" type="number" min="1" [(ngModel)]="orderFilters.customer" class="narrow"></label>
+            <label>From<input type="date" name="order-from" [(ngModel)]="orderFilters.date_from" (ngModelChange)="applyOrderFilters()"></label>
+            <label>To<input type="date" name="order-to" [(ngModel)]="orderFilters.date_to" (ngModelChange)="applyOrderFilters()"></label>
+            <label>Sort
+              <select name="order-ordering" [(ngModel)]="orderFilters.ordering" (ngModelChange)="applyOrderFilters()">
+                <option value="newest">Newest first</option>
+                <option value="oldest">Oldest first</option>
+                <option value="-total">Total: high to low</option>
+                <option value="total">Total: low to high</option>
+              </select>
+            </label>
+            <button class="btn btn-primary btn-sm" type="submit">Search</button>
+            <button class="btn btn-secondary btn-sm" type="button" (click)="clearOrderFilters()" [disabled]="!orderFilterCount">Clear</button>
+          </form>
+          <p *ngIf="orderFilterCount" class="filter-summary">{{ orders.length }} {{ orders.length === 1 ? 'order matches' : 'orders match' }} your filters.</p>
+          <p *ngIf="orders.length === 0">{{ orderFilterCount ? 'No orders match these filters.' : 'No orders found.' }}</p>
           <div class="table-wrap" *ngIf="orders.length">
             <table>
               <thead><tr><th>Order</th><th *ngIf="canSeeCustomerData">Customer ID</th><th>Date</th><th>Delivery address</th><th>Total</th><th>Payment</th><th>Status</th></tr></thead>
@@ -89,6 +122,10 @@ import { apiErrorMessage } from '../../utils/http';
     </main>
   `,
   styles: [`
+    .order-filters { margin: 10px 0 8px; }
+    .order-filters .grow { flex: 1 1 220px; }
+    .order-filters .narrow { width: 110px; }
+    .filter-summary { color: var(--text-light); font-size: .9rem; margin-bottom: 8px; }
     .management-page { padding: 48px 0; }
     h1 { margin-bottom: 30px; }
     section { margin: 32px 0; background: white; padding: 24px; border-radius: 14px; box-shadow: var(--shadow); }
@@ -108,6 +145,8 @@ export class ManagementComponent implements OnInit {
   orders: any[] = [];
   products: any[] = [];
   stockReasons: Record<number, string> = {};
+  readonly orderStatuses = ['New', 'Paid', 'Preparing', 'Shipped', 'Delivered', 'Cancelled'];
+  orderFilters = this.emptyOrderFilters();
   message = '';
 
   constructor(
@@ -255,8 +294,36 @@ export class ManagementComponent implements OnInit {
     });
   }
 
+  get orderFilterCount(): number {
+    return countActiveFilters(activeFilters(this.orderFilters));
+  }
+
+  applyOrderFilters(): void {
+    const filters = this.orderFilters;
+    if (filters.date_from && filters.date_to && filters.date_from > filters.date_to) {
+      this.message = 'The start date must be on or before the end date.';
+      return;
+    }
+    this.loadOrders();
+  }
+
+  clearOrderFilters(): void {
+    this.orderFilters = this.emptyOrderFilters();
+    this.loadOrders();
+  }
+
+  private emptyOrderFilters(): { search: string; status: string; payment_status: string; customer: number | null; date_from: string; date_to: string; ordering: string } {
+    return { search: '', status: '', payment_status: '', customer: null, date_from: '', date_to: '', ordering: 'newest' };
+  }
+
   private loadOrders() {
-    this.api.getUserOrders().subscribe({
+    const filters = activeFilters(this.orderFilters);
+    if (!this.canSeeCustomerData) {
+      // Warehouse staff cannot see payment or customer data, so those filters are never sent.
+      delete filters['payment_status'];
+      delete filters['customer'];
+    }
+    this.api.getUserOrders(filters).subscribe({
       next: rows => {
         this.orders = Array.isArray(rows) ? rows : rows.results || [];
         this.cdr.detectChanges();

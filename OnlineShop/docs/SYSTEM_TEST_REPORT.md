@@ -4,7 +4,7 @@
 
 This report maps the automated Django system suites in `configdrf/core/tests.py` and `configdrf/core/tests_features.py` to the project acceptance criteria. Tests run against an isolated database, so they do not change demonstration stock, orders, or customer data.
 
-**Latest verification result (23 November 2026): 83/83 backend tests passed on both SQLite and PostgreSQL 16, and 6/6 Angular unit tests passed** with:
+**Latest verification result (23 November 2026): 91/91 backend tests passed on both SQLite and PostgreSQL 16, and 6/6 Angular unit tests passed** with:
 
 ```powershell
 $env:DJANGO_SECRET_KEY = 'a-long-development-only-secret'
@@ -103,6 +103,14 @@ python configdrf/manage.py test core --verbosity 1
 | ST-81 | Search suggestions | Prefix matches first; inactive products and one-letter queries are excluded. |
 | ST-82 | Login normalisation | Sign-in works with mixed-case e-mail and surrounding spaces. |
 | ST-83 | Moderation regression | The original review/aggregate test now passes through moderation. |
+| ST-84 | Customer order filters | Status (incl. comma list), payment method, product search, `#id` search, sorting; another customer's order never matches. |
+| ST-85 | Staff order filters | Total range, customer ID, payment status, empty period, delivery-address search. |
+| ST-86 | Order filter validation | Unknown status/sort, negative or reversed totals, bad or reversed dates, non-numeric customer return 400. |
+| ST-87 | Warehouse filter boundary | Warehouse can filter by status but not by payment details or customer (403). |
+| ST-88 | Support ticket filters | Status, category, text search within own tickets; staff "handled by me" and "unassigned"; combined lists. |
+| ST-89 | Support filter validation | Customers cannot filter by assignment; invalid status/assignment return 400. |
+| ST-90 | Wishlist filters | Availability, category, text search, price sort; invalid availability returns 400. |
+| ST-91 | Waiting-list status | Default shows waiting + notified and hides alerts the customer removed; `active` / `notified` filters. |
 
 Angular unit tests (`npm test -- --watch=false`) additionally verify that an expired access token is refreshed once and the request is retried with valid header names only, that a still-unauthorised retry does not loop, that a session stays signed in while its refresh token is valid, and that API error messages are shown in full.
 
@@ -131,6 +139,7 @@ Angular unit tests (`npm test -- --watch=false`) additionally verify that an exp
 | UAT-10 | Sign in as Accountant → Accounting. | Period presets, KPI cards, income statement, breakdowns, ledger, CSV export, and print view work. |
 | UAT-11 | Sign in as Database Administrator → Backups. | A backup can be created and downloaded; other roles cannot open the page or API. |
 | UAT-12 | Use catalogue price/rating/stock filters, sorting, paging, and header suggestions. | Results, counts, chips, and URL update; removing a chip refreshes results. |
+| UAT-13 | Filter My Orders, Support, and Wishlist & waitlist as a customer; filter Store operations orders and the Support desk as Sales Manager. | Lists narrow immediately, show "N … match your filters", Clear restores the full list, and no other customer's records appear. |
 
 ## Known boundaries
 

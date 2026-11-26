@@ -27,9 +27,10 @@ Stage 3 changes and the list of fixed bugs are in [docs/CHANGELOG.md](docs/CHANG
 - **Accounting** workspace for the new Accountant role: revenue, refunds, receivables, VAT, breakdowns, payment ledger, CSV export, print view.
 - **Review moderation**: new and edited reviews are published only after a Sales/Head Manager approves them; rejections carry a reason for the author.
 - **Backups**: `backup_db` / `restore_db` commands and an administrator Backups page (portable gzip JSON, SQLite snapshot, rotation).
+- **Request filters and search**: orders, support tickets, wishlist and waiting list can be filtered, searched, and sorted (permission-aware).
 - **Catalogue filters and search**: price range, rating, in-stock, best-rated/popular/newest sorts, SKU and category search, pagination, type-ahead suggestions.
 - **Continuous integration** on GitHub Actions: PostgreSQL 16 test run (plus SQLite compatibility), migration and deployment checks, backup/restore smoke test, Angular build and unit tests.
-- An 83-case Django system test suite (passing on PostgreSQL 16, also on SQLite), Angular build/unit checks, and documented UAT/test evidence.
+- A 91-case Django system test suite (passing on PostgreSQL 16, also on SQLite), Angular build/unit checks, and documented UAT/test evidence.
 
 ## Technology
 
@@ -139,7 +140,7 @@ npm run build
 npm test -- --watch=false
 ```
 
-The latest backend run passed **83/83** tests on PostgreSQL 16 (and on SQLite), including **23 new tests** for moderation, accounting, backups, catalogue search, and login. The Angular suite has 6 tests. GitHub Actions runs everything on each push (`.github/workflows/ci.yml` in the repository root). Full coverage and UAT steps: [docs/SYSTEM_TEST_REPORT.md](docs/SYSTEM_TEST_REPORT.md).
+The latest backend run passed **91/91** tests on PostgreSQL 16 (and on SQLite), including **31 new tests** for moderation, accounting, backups, request filters, catalogue search, and login. The Angular suite has 6 tests. GitHub Actions runs everything on each push (`.github/workflows/ci.yml` in the repository root). Full coverage and UAT steps: [docs/SYSTEM_TEST_REPORT.md](docs/SYSTEM_TEST_REPORT.md).
 
 ## Backups
 
@@ -154,12 +155,13 @@ Details, scheduling, and SQLite → PostgreSQL migration: [docs/BACKUP_AND_RESTO
 
 - `GET /api/products/?search=&category=&min_price=&max_price=&min_rating=&in_stock=true&ordering=&page=&page_size=` — catalogue search and filters (`ordering`: `name`, `-name`, `price`, `-price`, `rating`, `popular`, `newest`).
 - `GET /api/products/suggest/?q=` — public type-ahead suggestions.
+- `GET /api/orders/?search=&status=New,Paid&payment_method=&payment_status=&date_from=&date_to=&min_total=&max_total=&customer=&ordering=newest|oldest|total|-total` — order filters (customers see only their own orders; `customer` and payment filters are staff-only, not for warehouse).
 - `GET /api/products/top/?limit=10` — public top-products ranking.
 - `GET/POST /api/products/<id>/reviews/` and `PATCH/DELETE /api/products/<id>/reviews/<review_id>/` — public feedback; owner writes only.
-- `GET/POST /api/wishlist/`, `DELETE /api/wishlist/<product_id>/` — customer wishlist.
-- `GET/POST /api/waitlist/`, `DELETE /api/waitlist/<product_id>/` — zero-stock restock alerts.
+- `GET/POST /api/wishlist/`, `DELETE /api/wishlist/<product_id>/` — customer wishlist. Filters: `search`, `category`, `availability=in_stock|out_of_stock`, `ordering=newest|oldest|name|price|-price`.
+- `GET/POST /api/waitlist/`, `DELETE /api/waitlist/<product_id>/` — zero-stock restock alerts. Same filters plus `status=all|active|notified`.
 - `GET /api/notifications/`, `PATCH /api/notifications/<id>/read/` — owner’s in-app notifications.
-- `GET/POST /api/support-tickets/`, `PATCH /api/support-tickets/<id>/` — customer-owned tickets and authorised staff triage.
+- `GET/POST /api/support-tickets/`, `PATCH /api/support-tickets/<id>/` — customer-owned tickets and authorised staff triage. Filters: `search`, `status` (comma list), `category`, `date_from`, `date_to`, `assigned=me|unassigned` (staff), `ordering=updated|newest|oldest`.
 - `PATCH /api/users/<id>/role/` — Head Manager/administrator, or bounded Security Manager role control. Security changes need `reason`.
 - `PATCH /api/users/<id>/status/` — Security Manager/administrator with a required reason.
 - `PATCH /api/products/<id>/stock/` — Warehouse/administrator with `stock_qty` or `adjustment` plus reason.

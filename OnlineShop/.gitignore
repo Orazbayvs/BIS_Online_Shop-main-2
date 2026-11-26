@@ -211,6 +211,7 @@ myenv/
 db.sqlite3
 
 # Database backups contain password hashes and order data - never commit them.
-backups/
-configdrf/backups/
+# Only the backup DATA folders - not the frontend page src/app/pages/backups.
+/backups/
+/configdrf/backups/
 *.json.gz

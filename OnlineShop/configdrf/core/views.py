@@ -30,6 +30,12 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .audit import record_audit_event
+from .filters import (
+    filter_orders,
+    filter_saved_products,
+    filter_support_tickets,
+    filter_waitlist_status,
+)
 from .models import (
     Category,
     CustomerNotification,
@@ -823,9 +829,10 @@ class WishlistList(APIView):
 
     def get(self, request):
         self._ensure_customer(request)
-        items = (
+        items = filter_saved_products(
             WishlistItem.objects.filter(user=request.user)
-            .select_related('product__category', 'product__owner')
+            .select_related('product__category', 'product__owner'),
+            request.query_params,
         )
         return Response(WishlistItemSerializer(items, many=True, context={'request': request}).data)
 
@@ -894,9 +901,13 @@ class WaitlistList(APIView):
 
     def get(self, request):
         self._ensure_customer(request)
-        entries = (
-            WaitlistItem.objects.filter(user=request.user)
-            .select_related('product__category', 'product__owner')
+        entries = filter_saved_products(
+            filter_waitlist_status(
+                WaitlistItem.objects.filter(user=request.user)
+                .select_related('product__category', 'product__owner'),
+                request.query_params,
+            ),
+            request.query_params,
         )
         return Response(WaitlistItemSerializer(entries, many=True, context={'request': request}).data)
 
@@ -1030,8 +1041,10 @@ class SupportTicketList(APIView):
 
     def get(self, request):
         tickets = SupportTicket.objects.select_related('customer', 'handled_by')
-        if not can_manage_support(request.user):
+        staff = can_manage_support(request.user)
+        if not staff:
             tickets = tickets.filter(customer=request.user)
+        tickets = filter_support_tickets(tickets, request.query_params, user=request.user, staff=staff)
         return Response(SupportTicketSerializer(tickets, many=True, context={'request': request}).data)
 
     def post(self, request):
@@ -1244,10 +1257,17 @@ class UserOrders(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        if has_role(request.user, User.ROLE_MANAGER, User.ROLE_HEAD_MANAGER, User.ROLE_WAREHOUSE):
+        staff = has_role(request.user, User.ROLE_MANAGER, User.ROLE_HEAD_MANAGER, User.ROLE_WAREHOUSE)
+        if staff:
             orders = Order.objects.prefetch_related('items__product', 'payment').all()
         else:
             orders = request.user.orders.prefetch_related('items__product', 'payment').all()
+        params = request.query_params
+        if request.user.role == User.ROLE_WAREHOUSE and not is_system_administrator(request.user):
+            # Warehouse staff never see payment data or customer IDs, so they cannot filter on them either.
+            if params.get('payment_status') or params.get('payment_method') or params.get('customer'):
+                raise PermissionDenied('Warehouse staff cannot filter orders by payment or customer details.')
+        orders = filter_orders(orders, params, staff=staff)
         return Response(OrderSerializer(orders, many=True, context={'request': request}).data)
 
     def post(self, request):

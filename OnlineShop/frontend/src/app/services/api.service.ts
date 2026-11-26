@@ -172,12 +172,12 @@ export class ApiService {
     return this.http.post<Order>(`${this.baseUrl}/orders/`, order);
   }
 
-  getUserOrders(): Observable<Collection<Order>> {
-    return this.http.get<Collection<Order>>(`${this.baseUrl}/orders/`);
+  getUserOrders(params?: QueryParams): Observable<Collection<Order>> {
+    return this.http.get<Collection<Order>>(`${this.baseUrl}/orders/`, { params: this.toParams(params) });
   }
 
-  getWishlist(): Observable<Collection<SavedProductItem>> {
-    return this.http.get<Collection<SavedProductItem>>(`${this.baseUrl}/wishlist/`);
+  getWishlist(params?: QueryParams): Observable<Collection<SavedProductItem>> {
+    return this.http.get<Collection<SavedProductItem>>(`${this.baseUrl}/wishlist/`, { params: this.toParams(params) });
   }
 
   addToWishlist(productId: number): Observable<SavedProductItem> {
@@ -188,8 +188,8 @@ export class ApiService {
     return this.http.delete<void>(`${this.baseUrl}/wishlist/${productId}/`);
   }
 
-  getWaitlist(): Observable<Collection<SavedProductItem>> {
-    return this.http.get<Collection<SavedProductItem>>(`${this.baseUrl}/waitlist/`);
+  getWaitlist(params?: QueryParams): Observable<Collection<SavedProductItem>> {
+    return this.http.get<Collection<SavedProductItem>>(`${this.baseUrl}/waitlist/`, { params: this.toParams(params) });
   }
 
   addToWaitlist(productId: number): Observable<SavedProductItem> {
@@ -208,8 +208,8 @@ export class ApiService {
     return this.http.patch<AppNotification>(`${this.baseUrl}/notifications/${notificationId}/read/`, {});
   }
 
-  getSupportTickets(): Observable<Collection<SupportTicket>> {
-    return this.http.get<Collection<SupportTicket>>(`${this.baseUrl}/support-tickets/`);
+  getSupportTickets(params?: QueryParams): Observable<Collection<SupportTicket>> {
+    return this.http.get<Collection<SupportTicket>>(`${this.baseUrl}/support-tickets/`, { params: this.toParams(params) });
   }
 
   createSupportTicket(ticket: { subject: string; message: string; category?: string }): Observable<SupportTicket> {

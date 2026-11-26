@@ -379,3 +379,124 @@ class LoginTests(FeatureTestBase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertIn('access', response.data)
+
+
+class RequestFilterTests(FeatureTestBase):
+    """Filters and search for orders, support tickets, wishlist and waiting list."""
+
+    def setUp(self):
+        super().setUp()
+        self.paid = self.make_order(self.buyer, self.headphones, 2, 'Paid', 'Paid')            # 200
+        self.new_cod = self.make_order(self.buyer, self.kettle, 1, 'New', 'Pending', 'cash_on_delivery')  # 40
+        self.other = self.make_order(self.other_buyer, self.kettle, 5, 'Delivered', 'Paid')   # 200
+
+    def order_ids(self, user, query=''):
+        self.client.force_authenticate(user)
+        response = self.client.get(f'/api/orders/{query}')
+        self.assertEqual(response.status_code, 200, response.data)
+        return [row['id'] for row in response.data]
+
+    # Orders --------------------------------------------------------------------------
+
+    def test_customer_order_filters_stay_within_own_orders(self):
+        self.assertEqual(self.order_ids(self.buyer), [self.new_cod.id, self.paid.id])
+        self.assertEqual(self.order_ids(self.buyer, '?status=Paid'), [self.paid.id])
+        self.assertEqual(self.order_ids(self.buyer, '?status=New,Paid&ordering=total'), [self.new_cod.id, self.paid.id])
+        self.assertEqual(self.order_ids(self.buyer, '?payment_method=cash_on_delivery'), [self.new_cod.id])
+        self.assertEqual(self.order_ids(self.buyer, '?search=kettle'), [self.new_cod.id])
+        self.assertEqual(self.order_ids(self.buyer, f'?search=%23{self.paid.id}'), [self.paid.id])
+        # Another customer's order number never leaks through search.
+        self.assertEqual(self.order_ids(self.buyer, f'?search={self.other.id}'), [])
+
+    def test_manager_order_filters_by_total_customer_payment_and_date(self):
+        self.assertEqual(self.order_ids(self.manager, '?min_total=100&ordering=oldest'), [self.paid.id, self.other.id])
+        self.assertEqual(self.order_ids(self.manager, f'?customer={self.other_buyer.id}'), [self.other.id])
+        self.assertEqual(self.order_ids(self.manager, '?payment_status=Pending'), [self.new_cod.id])
+        self.assertEqual(self.order_ids(self.manager, '?date_from=2000-01-01&date_to=2000-01-02'), [])
+        self.assertEqual(len(self.order_ids(self.manager, '?search=street')), 3)
+
+    def test_invalid_order_filters_are_rejected(self):
+        self.client.force_authenticate(self.manager)
+        for query in ('?status=Lost', '?ordering=random', '?min_total=-5', '?min_total=9&max_total=1',
+                      '?date_from=yesterday', '?date_from=2026-02-01&date_to=2026-01-01', '?customer=abc'):
+            self.assertEqual(self.client.get(f'/api/orders/{query}').status_code, 400, query)
+
+    def test_warehouse_cannot_filter_by_payment_or_customer(self):
+        self.client.force_authenticate(self.warehouse)
+        self.assertEqual(self.client.get('/api/orders/?status=Paid').status_code, 200)
+        self.assertEqual(self.client.get('/api/orders/?payment_status=Paid').status_code, 403)
+        self.assertEqual(self.client.get(f'/api/orders/?customer={self.buyer.id}').status_code, 403)
+
+    # Support tickets -------------------------------------------------------------------
+
+    def make_ticket(self, customer, subject, category='general', status='Open', handled_by=None):
+        from .models import SupportTicket
+        return SupportTicket.objects.create(
+            customer=customer, subject=subject, message='Please help with this request.',
+            category=category, status=status, handled_by=handled_by,
+        )
+
+    def ticket_ids(self, user, query=''):
+        self.client.force_authenticate(user)
+        response = self.client.get(f'/api/support-tickets/{query}')
+        self.assertEqual(response.status_code, 200, response.data)
+        return {row['id'] for row in response.data}
+
+    def test_support_ticket_filters(self):
+        late = self.make_ticket(self.buyer, 'Late delivery', category='order')
+        login = self.make_ticket(self.buyer, 'Cannot sign in', category='account', status='Resolved')
+        other = self.make_ticket(self.other_buyer, 'Broken kettle', category='product', handled_by=self.manager)
+
+        self.assertEqual(self.ticket_ids(self.buyer, '?status=Open'), {late.id})
+        self.assertEqual(self.ticket_ids(self.buyer, '?category=account'), {login.id})
+        self.assertEqual(self.ticket_ids(self.buyer, '?search=delivery'), {late.id})
+        self.assertEqual(self.ticket_ids(self.buyer, '?search=kettle'), set())  # not their ticket
+        self.assertEqual(self.ticket_ids(self.manager, '?assigned=me'), {other.id})
+        self.assertEqual(self.ticket_ids(self.manager, '?assigned=unassigned'), {late.id, login.id})
+        self.assertEqual(self.ticket_ids(self.manager, '?status=Open,Resolved&category=order,account'), {late.id, login.id})
+
+    def test_support_ticket_filter_validation(self):
+        self.client.force_authenticate(self.buyer)
+        self.assertEqual(self.client.get('/api/support-tickets/?assigned=me').status_code, 400)
+        self.assertEqual(self.client.get('/api/support-tickets/?status=Waiting').status_code, 400)
+        self.client.force_authenticate(self.manager)
+        self.assertEqual(self.client.get('/api/support-tickets/?assigned=someone').status_code, 400)
+
+    # Wishlist and waiting list -------------------------------------------------------
+
+    def test_wishlist_filters(self):
+        from .models import WishlistItem
+        WishlistItem.objects.create(user=self.buyer, product=self.headphones)
+        WishlistItem.objects.create(user=self.buyer, product=self.speaker)
+        WishlistItem.objects.create(user=self.buyer, product=self.kettle)
+        WishlistItem.objects.create(user=self.other_buyer, product=self.kettle)
+        self.client.force_authenticate(self.buyer)
+
+        def products(query):
+            response = self.client.get(f'/api/wishlist/{query}')
+            self.assertEqual(response.status_code, 200, response.data)
+            return [row['product'] for row in response.data]
+
+        self.assertEqual(len(products('')), 3)
+        self.assertEqual(products('?availability=out_of_stock'), [self.speaker.id])
+        self.assertEqual(products(f'?category={self.home.id}'), [self.kettle.id])
+        self.assertEqual(products('?search=sound'), [self.speaker.id])
+        self.assertEqual(products('?ordering=-price'), [self.speaker.id, self.headphones.id, self.kettle.id])
+        self.assertEqual(self.client.get('/api/wishlist/?availability=soon').status_code, 400)
+
+    def test_waitlist_status_filter_hides_entries_the_customer_removed(self):
+        from .models import WaitlistItem
+        waiting = WaitlistItem.objects.create(user=self.buyer, product=self.speaker)
+        notified = WaitlistItem.objects.create(
+            user=self.buyer, product=self.headphones, is_active=False, notified_at=timezone.now(),
+        )
+        WaitlistItem.objects.create(user=self.buyer, product=self.kettle, is_active=False)  # removed by customer
+        self.client.force_authenticate(self.buyer)
+
+        def ids(query=''):
+            return {row['id'] for row in self.client.get(f'/api/waitlist/{query}').data}
+
+        self.assertEqual(ids(), {waiting.id, notified.id})
+        self.assertEqual(ids('?status=active'), {waiting.id})
+        self.assertEqual(ids('?status=notified'), {notified.id})
+        self.assertEqual(self.client.get('/api/waitlist/?status=old').status_code, 400)
